@@ -11,12 +11,12 @@ local LocalPlayer = Players.LocalPlayer
 local SMALL_QUEUE = 40
 local BURST_QUEUE = 250
 
-local MICRO_BUDGET  = 0.0005
-local NORMAL_BUDGET = 0.0010
+local MICRO_BUDGET  = 0.0003
+local NORMAL_BUDGET = 0.0006
 local BURST_BUDGET  = 0.0015
 
-local MICRO_MAX  = 35
-local NORMAL_MAX = 90
+local MICRO_MAX  = 25
+local NORMAL_MAX = 60
 local BURST_MAX  = 140
 
 local GC_THRESHOLD = 3000
@@ -251,6 +251,18 @@ local function cleanCharacter(character)
 		if animController then
 			h_AnimationController(animController)
 		end
+
+		-- Name/health billboard GUIs are rendered per-character every
+		-- frame; with many players/NPCs nearby this is a real, steady
+		-- render cost. Turning it off is a genuine FPS gain, not just
+		-- "not adding overhead".
+		safe(function()
+			humanoid.DisplayDistanceType =
+				Enum.HumanoidDisplayDistanceType.None
+
+			humanoid.NameDisplayDistance = 0
+			humanoid.HealthDisplayDistance = 0
+		end)
 	end
 end
 
@@ -297,8 +309,24 @@ local function cleanLighting()
 			safe(function()
 				obj.Enabled = false
 			end)
+
+		elseif obj:IsA("Atmosphere") then
+			-- Atmosphere adds a full-screen fog/haze pass every frame
+			-- (fill-rate cost). Zeroing it out removes that pass
+			-- without deleting the instance (avoids breaking scripts
+			-- that reference it).
+			safe(function()
+				obj.Density = 0
+				obj.Haze = 0
+				obj.Glare = 0
+			end)
 		end
 	end
+
+	safe(function()
+		Lighting.FogEnd = 100000
+		Lighting.FogStart = 100000
+	end)
 
 	safe(function()
 		Lighting:GetPropertyChangedSignal(
@@ -351,6 +379,13 @@ local function cleanTerrain()
 
 	safe(function()
 		terrain.WaterTransparency = 1
+	end)
+
+	-- Terrain grass/rock decoration is extra geometry drawn on top of
+	-- the terrain mesh -- disabling it is a straightforward render cost
+	-- cut, especially on grassy/foliage-heavy maps.
+	safe(function()
+		terrain.Decoration = false
 	end)
 end
 

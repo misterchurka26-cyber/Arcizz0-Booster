@@ -17,8 +17,8 @@ local LocalPlayer = Players.LocalPlayer
 --============================================================
 -- CONFIG (adaptive batching)
 --============================================================
-local SMALL_QUEUE   = 40    -- почти пустая очередь -> нано-режим
-local BURST_QUEUE   = 150   -- массовый спавн -> burst-режим
+local SMALL_QUEUE   = 40
+local BURST_QUEUE   = 150
 
 local MICRO_BUDGET  = 0.0008
 local NORMAL_BUDGET = 0.0015
@@ -29,7 +29,7 @@ local NORMAL_MAX     = 180
 local BURST_MAX      = 420
 
 local GC_THRESHOLD  = 2500
-local CLOCK_CHECK_EVERY = 8  -- os.clock() проверяем не каждую итерацию
+local CLOCK_CHECK_EVERY = 8
 
 --============================================================
 -- STATE
@@ -39,20 +39,15 @@ local queueHandlers = table.create(2048)
 local queueHead = 1
 local queueLen  = 0
 
--- weak-key таблицы: без property-write, без сигналов, без репликации,
--- сами чистятся при GC уничтоженного объекта. Это дешевле, чем Attribute
--- (Attribute = запись свойства в engine storage + потенциальные listeners)
--- и дешевле, чем CollectionService tag (доп. система индексации тегов,
--- которая тут не нужна, т.к. queried/lookup нам не требуется).
-local queued    = setmetatable({}, { __mode = "k" }) -- уже в очереди
-local optimized = setmetatable({}, { __mode = "k" }) -- уже обработан
+local queued    = setmetatable({}, { __mode = "k" })
+local optimized = setmetatable({}, { __mode = "k" })
 
 local function safe(fn)
     pcall(fn)
 end
 
 --============================================================
--- HANDLERS (по одному pcall на объект, не по одному на свойство)
+-- HANDLERS
 --============================================================
 local function h_Animator(obj)
     safe(function()
@@ -61,27 +56,42 @@ local function h_Animator(obj)
             tracks[i]:Stop(0)
         end
     end)
-    safe(function() obj:Destroy() end)
+
+    safe(function()
+        obj:Destroy()
+    end)
 end
 
 local function h_AnimationController(obj)
-    safe(function() obj:Destroy() end)
+    safe(function()
+        obj:Destroy()
+    end)
 end
 
 local function h_Animation(obj)
-    safe(function() obj.AnimationId = "rbxassetid://0" end)
+    safe(function()
+        obj.AnimationId = "rbxassetid://0"
+    end)
 end
 
+-- Удаление SurfaceAppearance
 local function h_SurfaceAppearance(obj)
-    safe(function() obj:Destroy() end)
+    safe(function()
+        obj:Destroy()
+    end)
 end
 
+-- Удаление Decal / Texture
 local function h_DecalTexture(obj)
-    safe(function() obj:Destroy() end)
+    safe(function()
+        obj:Destroy()
+    end)
 end
 
 local function h_EffectDisable(obj)
-    safe(function() obj.Enabled = false end)
+    safe(function()
+        obj.Enabled = false
+    end)
 end
 
 local function h_Light(obj)
@@ -98,20 +108,30 @@ local function h_Video(obj)
     end)
 end
 
+-- MeshPart:
+-- сохраняем сам меш, но полностью убираем его текстуру
 local function h_MeshPart(obj)
     safe(function()
         obj.RenderFidelity = Enum.RenderFidelity.Performance
         obj.CastShadow = false
         obj.Reflectance = 0
         obj.MaterialVariant = ""
+
+        -- Убираем текстуру MeshPart
+        obj.TextureID = ""
+
         if obj.Material ~= Enum.Material.Neon and obj.Material ~= Enum.Material.ForceField then
             obj.Material = Enum.Material.SmoothPlastic
         end
     end)
 end
 
+-- SpecialMesh:
+-- сохраняем геометрию меша, удаляем TextureId
 local function h_SpecialMesh(obj)
-    safe(function() obj.TextureId = "" end)
+    safe(function()
+        obj.TextureId = ""
+    end)
 end
 
 local function h_BasePart(obj)
@@ -119,6 +139,7 @@ local function h_BasePart(obj)
         obj.CastShadow = false
         obj.Reflectance = 0
         obj.MaterialVariant = ""
+
         if obj.Material ~= Enum.Material.Neon and obj.Material ~= Enum.Material.ForceField then
             obj.Material = Enum.Material.SmoothPlastic
         end
@@ -126,14 +147,17 @@ local function h_BasePart(obj)
 end
 
 --============================================================
--- DISPATCH TABLE (ClassName -> handler), O(1) вместо цепочки IsA
+-- DISPATCH TABLE
 --============================================================
 local classHandlers = {
     Animator = h_Animator,
     AnimationController = h_AnimationController,
     Animation = h_Animation,
 
+    -- Полностью удаляем SurfaceAppearance
     SurfaceAppearance = h_SurfaceAppearance,
+
+    -- Полностью удаляем Decal / Texture
     Decal = h_DecalTexture,
     Texture = h_DecalTexture,
 
@@ -150,10 +174,12 @@ local classHandlers = {
 
     VideoFrame = h_Video,
 
+    -- MeshPart без текстуры
     MeshPart = h_MeshPart,
+
+    -- SpecialMesh без текстуры
     SpecialMesh = h_SpecialMesh,
 
-    -- частые наследники BasePart без лишнего IsA-фоллбэка
     Part = h_BasePart,
     WedgePart = h_BasePart,
     CornerWedgePart = h_BasePart,
@@ -166,24 +192,24 @@ local classHandlers = {
 }
 
 --============================================================
--- QUEUEING: фильтрация нерелевантных объектов ДО очереди
+-- QUEUEING
 --============================================================
 local function tryQueue(obj)
     if not obj or not obj.Parent then
         return
     end
+
     if queued[obj] or optimized[obj] then
         return
     end
 
     local handler = classHandlers[obj.ClassName]
+
     if not handler then
-        -- единственный fallback IsA-вызов, только для редких/экзотических
-        -- наследников BasePart, которых нет в таблице выше
         if obj:IsA("BasePart") then
             handler = h_BasePart
         else
-            return -- Script/Value/Weld/Attachment/Sound и т.п. — не трогаем
+            return
         end
     end
 
@@ -194,7 +220,7 @@ local function tryQueue(obj)
 end
 
 --============================================================
--- CHARACTER FAST-PATH (без GetDescendants!)
+-- CHARACTER FAST-PATH
 --============================================================
 local function cleanCharacter(character)
     if not character or not character.Parent then
@@ -202,36 +228,49 @@ local function cleanCharacter(character)
     end
 
     local children = character:GetChildren()
+
     for i = 1, #children do
         local child = children[i]
         local cn = child.ClassName
-        if cn == "Accessory" or cn == "Shirt" or cn == "Pants" or cn == "ShirtGraphic" then
-            safe(function() child:Destroy() end)
+
+        if cn == "Accessory"
+            or cn == "Shirt"
+            or cn == "Pants"
+            or cn == "ShirtGraphic" then
+
+            safe(function()
+                child:Destroy()
+            end)
         end
     end
 
     local animate = character:FindFirstChild("Animate")
+
     if animate then
-        safe(function() animate:Destroy() end)
+        safe(function()
+            animate:Destroy()
+        end)
     end
 
     local humanoid = character:FindFirstChildOfClass("Humanoid")
+
     if humanoid then
         local animator = humanoid:FindFirstChildOfClass("Animator")
+
         if animator then
             h_Animator(animator)
         end
+
         local animController = humanoid:FindFirstChildOfClass("AnimationController")
+
         if animController then
             h_AnimationController(animController)
         end
     end
-    -- Trail/Beam/ParticleEmitter внутри Accessory уже уничтожены вместе
-    -- с самим Accessory выше — отдельный обход дерева не нужен.
 end
 
 --============================================================
--- LIGHTING / MATERIALSERVICE / TERRAIN (разово при старте)
+-- LIGHTING / MATERIALSERVICE / TERRAIN
 --============================================================
 local function cleanLighting()
     safe(function()
@@ -243,17 +282,35 @@ local function cleanLighting()
         settings().Rendering.QualityLevel = Enum.QualityLevel.Level01
     end)
 
-    safe(function() Lighting.GlobalShadows = false end)
-    safe(function() Lighting.EnvironmentDiffuseScale = 0 end)
-    safe(function() Lighting.EnvironmentSpecularScale = 0 end)
-    safe(function() Lighting.ShadowSoftness = 0 end)
-    safe(function() Lighting.Technology = Enum.Technology.Compatibility end)
+    safe(function()
+        Lighting.GlobalShadows = false
+    end)
+
+    safe(function()
+        Lighting.EnvironmentDiffuseScale = 0
+    end)
+
+    safe(function()
+        Lighting.EnvironmentSpecularScale = 0
+    end)
+
+    safe(function()
+        Lighting.ShadowSoftness = 0
+    end)
+
+    safe(function()
+        Lighting.Technology = Enum.Technology.Compatibility
+    end)
 
     local children = Lighting:GetChildren()
+
     for i = 1, #children do
         local obj = children[i]
+
         if obj:IsA("PostEffect") then
-            safe(function() obj.Enabled = false end)
+            safe(function()
+                obj.Enabled = false
+            end)
         end
     end
 
@@ -268,23 +325,40 @@ end
 
 local function cleanMaterialService()
     local children = MaterialService:GetChildren()
+
     for i = 1, #children do
         local obj = children[i]
+
         if obj:IsA("MaterialVariant") or obj:IsA("TerrainDetail") then
-            safe(function() obj:Destroy() end)
+            safe(function()
+                obj:Destroy()
+            end)
         end
     end
 end
 
 local function cleanTerrain()
     local terrain = Workspace:FindFirstChildOfClass("Terrain")
+
     if not terrain then
         return
     end
-    safe(function() terrain.WaterWaveSize = 0 end)
-    safe(function() terrain.WaterWaveSpeed = 0 end)
-    safe(function() terrain.WaterReflectance = 0 end)
-    safe(function() terrain.WaterTransparency = 1 end)
+
+    safe(function()
+        terrain.WaterWaveSize = 0
+    end)
+
+    safe(function()
+        terrain.WaterWaveSpeed = 0
+    end)
+
+    safe(function()
+        terrain.WaterReflectance = 0
+    end)
+
+    safe(function()
+        terrain.WaterTransparency = 1
+    end)
 end
 
 --============================================================
@@ -296,6 +370,7 @@ local function createGui()
     end
 
     local playerGui = LocalPlayer:FindFirstChildOfClass("PlayerGui")
+
     if not playerGui or playerGui:FindFirstChild("Arcizz0Booster") then
         return
     end
@@ -352,26 +427,51 @@ local function createGui()
         ColorSequenceKeypoint.new(0.75, Color3.fromRGB(255, 0, 0)),
         ColorSequenceKeypoint.new(1, Color3.fromRGB(65, 0, 0)),
     })
+
     gradient.Offset = Vector2.new(-1, 0)
     gradient.Parent = title
 
-    TweenService:Create(frame, TweenInfo.new(0.55, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {
-        Position = UDim2.new(0.5, 0, 0, 18)
-    }):Play()
+    TweenService:Create(
+        frame,
+        TweenInfo.new(
+            0.55,
+            Enum.EasingStyle.Quint,
+            Enum.EasingDirection.Out
+        ),
+        {
+            Position = UDim2.new(0.5, 0, 0, 18)
+        }
+    ):Play()
 
     task.spawn(function()
         for _ = 1, 3 do
-            if not screenGui.Parent then break end
-            local a = TweenService:Create(gradient, TweenInfo.new(0.75, Enum.EasingStyle.Linear), {
-                Offset = Vector2.new(1, 0)
-            })
+            if not screenGui.Parent then
+                break
+            end
+
+            local a = TweenService:Create(
+                gradient,
+                TweenInfo.new(0.75, Enum.EasingStyle.Linear),
+                {
+                    Offset = Vector2.new(1, 0)
+                }
+            )
+
             a:Play()
             a.Completed:Wait()
-            if not screenGui.Parent then break end
 
-            local b = TweenService:Create(gradient, TweenInfo.new(0.75, Enum.EasingStyle.Linear), {
-                Offset = Vector2.new(-1, 0)
-            })
+            if not screenGui.Parent then
+                break
+            end
+
+            local b = TweenService:Create(
+                gradient,
+                TweenInfo.new(0.75, Enum.EasingStyle.Linear),
+                {
+                    Offset = Vector2.new(-1, 0)
+                }
+            )
+
             b:Play()
             b.Completed:Wait()
         end
@@ -381,10 +481,21 @@ local function createGui()
         if not screenGui.Parent then
             return
         end
-        local closeTween = TweenService:Create(frame, TweenInfo.new(0.45, Enum.EasingStyle.Quint, Enum.EasingDirection.In), {
-            Position = UDim2.new(0.5, 0, 0, -88)
-        })
+
+        local closeTween = TweenService:Create(
+            frame,
+            TweenInfo.new(
+                0.45,
+                Enum.EasingStyle.Quint,
+                Enum.EasingDirection.In
+            ),
+            {
+                Position = UDim2.new(0.5, 0, 0, -88)
+            }
+        )
+
         closeTween:Play()
+
         closeTween.Completed:Connect(function()
             if screenGui.Parent then
                 screenGui:Destroy()
@@ -399,6 +510,7 @@ end
 cleanLighting()
 cleanMaterialService()
 cleanTerrain()
+
 task.defer(createGui)
 
 local function scanInitialWorld()
@@ -407,6 +519,7 @@ local function scanInitialWorld()
     end
 
     local objects = Workspace:GetDescendants()
+
     for i = 1, #objects do
         tryQueue(objects[i])
     end
@@ -424,12 +537,13 @@ task.spawn(scanInitialWorld)
 -- LIVE STREAMING / SPAWN HANDLER
 --============================================================
 Workspace.DescendantAdded:Connect(function(obj)
-    -- fast-path: персонаж обрабатывается напрямую, минуя очередь
     if obj.ClassName == "Humanoid" then
         local character = obj.Parent
+
         if character then
             task.defer(cleanCharacter, character)
         end
+
         return
     end
 
@@ -453,7 +567,7 @@ end
 Players.PlayerAdded:Connect(setupPlayer)
 
 --============================================================
--- HEARTBEAT WORKER (adaptive batching)
+-- HEARTBEAT WORKER
 --============================================================
 RunService.Heartbeat:Connect(function()
     local remaining = queueLen - queueHead + 1
@@ -462,13 +576,16 @@ RunService.Heartbeat:Connect(function()
         if queueHead > GC_THRESHOLD then
             table.clear(queueObjs)
             table.clear(queueHandlers)
+
             queueHead = 1
             queueLen = 0
         end
+
         return
     end
 
     local budget, maxPerFrame
+
     if remaining >= BURST_QUEUE then
         budget, maxPerFrame = BURST_BUDGET, BURST_MAX
     elseif remaining <= SMALL_QUEUE then
@@ -483,12 +600,15 @@ RunService.Heartbeat:Connect(function()
     while queueHead <= queueLen and processed < maxPerFrame do
         local obj = queueObjs[queueHead]
         local handler = queueHandlers[queueHead]
+
         queueObjs[queueHead] = nil
         queueHandlers[queueHead] = nil
+
         queueHead += 1
 
         if obj then
             queued[obj] = nil
+
             if obj.Parent then
                 handler(obj)
                 optimized[obj] = true
@@ -496,21 +616,27 @@ RunService.Heartbeat:Connect(function()
         end
 
         processed += 1
-        if processed % CLOCK_CHECK_EVERY == 0 and (os.clock() - start) >= budget then
+
+        if processed % CLOCK_CHECK_EVERY == 0
+            and (os.clock() - start) >= budget then
             break
         end
     end
 
     if queueHead > GC_THRESHOLD then
         local newLen = queueLen - queueHead + 1
+
         local compactedObjs = table.create(newLen)
         local compactedHandlers = table.create(newLen)
+
         for i = queueHead, queueLen do
             compactedObjs[#compactedObjs + 1] = queueObjs[i]
             compactedHandlers[#compactedHandlers + 1] = queueHandlers[i]
         end
+
         queueObjs = compactedObjs
         queueHandlers = compactedHandlers
+
         queueLen = #compactedObjs
         queueHead = 1
     end

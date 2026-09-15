@@ -1,8 +1,3 @@
---============================================================
--- ARCIZZ0 ULTRA / EXTREME CLIENT FPS BOOSTER
--- LOW FREEZE / LOW STUTTER / TEXTURE STRIP
---============================================================
-
 local Workspace       = game:GetService("Workspace")
 local Lighting        = game:GetService("Lighting")
 local Players         = game:GetService("Players")
@@ -12,10 +7,6 @@ local UserSettings    = game:GetService("UserSettings")
 local TweenService    = game:GetService("TweenService")
 
 local LocalPlayer = Players.LocalPlayer
-
---============================================================
--- CONFIG
---============================================================
 
 local SMALL_QUEUE = 40
 local BURST_QUEUE = 250
@@ -31,10 +22,6 @@ local BURST_MAX  = 140
 local GC_THRESHOLD = 3000
 local CLOCK_CHECK_EVERY = 10
 
---============================================================
--- STATE
---============================================================
-
 local queueObjs = table.create(2048)
 local queueHandlers = table.create(2048)
 
@@ -43,659 +30,538 @@ local queueLen = 0
 
 local queued = setmetatable({}, {__mode = "k"})
 local optimized = setmetatable({}, {__mode = "k"})
+local cleanedCharacters = setmetatable({}, {__mode = "k"})
 
 local function safe(fn)
-    pcall(fn)
+	pcall(fn)
 end
 
---============================================================
--- LIGHTWEIGHT HANDLERS
---============================================================
-
 local function h_Animator(obj)
-    safe(function()
-        local tracks = obj:GetPlayingAnimationTracks()
+	safe(function()
+		local tracks = obj:GetPlayingAnimationTracks()
 
-        for i = 1, #tracks do
-            tracks[i]:Stop(0)
-        end
-    end)
+		for i = 1, #tracks do
+			tracks[i]:Stop(0)
+		end
+	end)
 
-    safe(function()
-        obj:Destroy()
-    end)
+	safe(function()
+		obj:Destroy()
+	end)
 end
 
 local function h_AnimationController(obj)
-    safe(function()
-        obj:Destroy()
-    end)
+	safe(function()
+		obj:Destroy()
+	end)
 end
 
 local function h_Animation(obj)
-    safe(function()
-        obj.AnimationId = "rbxassetid://0"
-    end)
+	safe(function()
+		obj.AnimationId = "rbxassetid://0"
+	end)
 end
 
---============================================================
--- TEXTURE HANDLERS
---============================================================
-
 local function h_SurfaceAppearance(obj)
-    safe(function()
-        obj:Destroy()
-    end)
+	safe(function()
+		obj:Destroy()
+	end)
 end
 
 local function h_DecalTexture(obj)
-    safe(function()
-        obj:Destroy()
-    end)
+	safe(function()
+		obj:Destroy()
+	end)
 end
 
 local function h_MeshPart(obj)
-    safe(function()
-        obj.RenderFidelity = Enum.RenderFidelity.Performance
-        obj.CastShadow = false
-        obj.Reflectance = 0
-        obj.MaterialVariant = ""
+	safe(function()
+		obj.RenderFidelity = Enum.RenderFidelity.Performance
+		obj.CastShadow = false
+		obj.Reflectance = 0
+		obj.MaterialVariant = ""
+		obj.TextureID = ""
 
-        -- Убираем texture content
-        obj.TextureID = ""
-
-        if obj.Material ~= Enum.Material.Neon
-            and obj.Material ~= Enum.Material.ForceField then
-
-            obj.Material = Enum.Material.SmoothPlastic
-        end
-    end)
+		if obj.Material ~= Enum.Material.Neon
+			and obj.Material ~= Enum.Material.ForceField then
+			obj.Material = Enum.Material.SmoothPlastic
+		end
+	end)
 end
 
 local function h_SpecialMesh(obj)
-    safe(function()
-        obj.TextureId = ""
-    end)
+	safe(function()
+		obj.TextureId = ""
+	end)
 end
-
---============================================================
--- PART HANDLER
---============================================================
 
 local function h_BasePart(obj)
-    safe(function()
-        obj.CastShadow = false
-        obj.Reflectance = 0
-        obj.MaterialVariant = ""
+	safe(function()
+		obj.CastShadow = false
+		obj.Reflectance = 0
+		obj.MaterialVariant = ""
 
-        if obj.Material ~= Enum.Material.Neon
-            and obj.Material ~= Enum.Material.ForceField then
-
-            obj.Material = Enum.Material.SmoothPlastic
-        end
-    end)
+		if obj.Material ~= Enum.Material.Neon
+			and obj.Material ~= Enum.Material.ForceField then
+			obj.Material = Enum.Material.SmoothPlastic
+		end
+	end)
 end
 
---============================================================
--- EFFECTS
---============================================================
-
 local function h_EffectDisable(obj)
-    safe(function()
-        obj.Enabled = false
-    end)
+	safe(function()
+		obj.Enabled = false
+	end)
 end
 
 local function h_Light(obj)
-    safe(function()
-        obj.Shadows = false
-        obj.Enabled = false
-    end)
+	safe(function()
+		obj.Shadows = false
+		obj.Enabled = false
+	end)
 end
 
 local function h_Video(obj)
-    safe(function()
-        obj.Playing = false
-        obj.Visible = false
-    end)
+	safe(function()
+		obj.Playing = false
+		obj.Visible = false
+	end)
 end
-
---============================================================
--- HANDLERS
---============================================================
 
 local classHandlers = {
+	Animator = h_Animator,
+	AnimationController = h_AnimationController,
+	Animation = h_Animation,
 
-    Animator = h_Animator,
-    AnimationController = h_AnimationController,
-    Animation = h_Animation,
+	SurfaceAppearance = h_SurfaceAppearance,
 
-    SurfaceAppearance = h_SurfaceAppearance,
+	Decal = h_DecalTexture,
+	Texture = h_DecalTexture,
 
-    Decal = h_DecalTexture,
-    Texture = h_DecalTexture,
+	MeshPart = h_MeshPart,
+	SpecialMesh = h_SpecialMesh,
 
-    MeshPart = h_MeshPart,
-    SpecialMesh = h_SpecialMesh,
+	ParticleEmitter = h_EffectDisable,
+	Smoke = h_EffectDisable,
+	Fire = h_EffectDisable,
+	Sparkles = h_EffectDisable,
+	Trail = h_EffectDisable,
+	Beam = h_EffectDisable,
 
-    ParticleEmitter = h_EffectDisable,
-    Smoke = h_EffectDisable,
-    Fire = h_EffectDisable,
-    Sparkles = h_EffectDisable,
-    Trail = h_EffectDisable,
-    Beam = h_EffectDisable,
+	PointLight = h_Light,
+	SpotLight = h_Light,
+	SurfaceLight = h_Light,
 
-    PointLight = h_Light,
-    SpotLight = h_Light,
-    SurfaceLight = h_Light,
+	VideoFrame = h_Video,
 
-    VideoFrame = h_Video,
-
-    Part = h_BasePart,
-    WedgePart = h_BasePart,
-    CornerWedgePart = h_BasePart,
-    TrussPart = h_BasePart,
-    UnionOperation = h_BasePart,
-    NegateOperation = h_BasePart,
-    Seat = h_BasePart,
-    VehicleSeat = h_BasePart,
-    SpawnLocation = h_BasePart,
+	Part = h_BasePart,
+	WedgePart = h_BasePart,
+	CornerWedgePart = h_BasePart,
+	TrussPart = h_BasePart,
+	UnionOperation = h_BasePart,
+	NegateOperation = h_BasePart,
+	Seat = h_BasePart,
+	VehicleSeat = h_BasePart,
+	SpawnLocation = h_BasePart,
 }
 
---============================================================
--- QUEUE
---============================================================
-
 local function tryQueue(obj)
+	if not obj or not obj.Parent then
+		return
+	end
 
-    if not obj or not obj.Parent then
-        return
-    end
+	if queued[obj] or optimized[obj] then
+		return
+	end
 
-    if queued[obj] or optimized[obj] then
-        return
-    end
+	local handler = classHandlers[obj.ClassName]
 
-    local handler = classHandlers[obj.ClassName]
+	if not handler then
+		if obj:IsA("BasePart") then
+			handler = h_BasePart
+		else
+			return
+		end
+	end
 
-    if not handler then
+	queued[obj] = true
 
-        if obj:IsA("BasePart") then
-            handler = h_BasePart
-        else
-            return
-        end
-    end
-
-    queued[obj] = true
-
-    queueLen += 1
-
-    queueObjs[queueLen] = obj
-    queueHandlers[queueLen] = handler
+	queueLen += 1
+	queueObjs[queueLen] = obj
+	queueHandlers[queueLen] = handler
 end
-
---============================================================
--- LIVE TEXTURE FAST PATH
---============================================================
-
-local function liveTextureOptimize(obj)
-
-    local className = obj.ClassName
-
-    if className == "SurfaceAppearance" then
-
-        safe(function()
-            obj:Destroy()
-        end)
-
-        return true
-
-    elseif className == "Decal" then
-
-        safe(function()
-            obj:Destroy()
-        end)
-
-        return true
-
-    elseif className == "Texture" then
-
-        safe(function()
-            obj:Destroy()
-        end)
-
-        return true
-
-    elseif className == "MeshPart" then
-
-        safe(function()
-            obj.TextureID = ""
-        end)
-
-        return true
-
-    elseif className == "SpecialMesh" then
-
-        safe(function()
-            obj.TextureId = ""
-        end)
-
-        return true
-    end
-
-    return false
-end
-
---============================================================
--- CHARACTER
---============================================================
 
 local function cleanCharacter(character)
+	if not character or not character.Parent then
+		return
+	end
 
-    if not character or not character.Parent then
-        return
-    end
+	if cleanedCharacters[character] then
+		return
+	end
 
-    local children = character:GetChildren()
+	cleanedCharacters[character] = true
 
-    for i = 1, #children do
+	local children = character:GetChildren()
 
-        local child = children[i]
-        local cn = child.ClassName
+	for i = 1, #children do
+		local child = children[i]
+		local cn = child.ClassName
 
-        if cn == "Accessory"
-            or cn == "Shirt"
-            or cn == "Pants"
-            or cn == "ShirtGraphic" then
+		if cn == "Accessory"
+			or cn == "Shirt"
+			or cn == "Pants"
+			or cn == "ShirtGraphic" then
 
-            safe(function()
-                child:Destroy()
-            end)
-        end
-    end
+			safe(function()
+				child:Destroy()
+			end)
+		end
+	end
 
-    local animate = character:FindFirstChild("Animate")
+	local animate = character:FindFirstChild("Animate")
 
-    if animate then
+	if animate then
+		safe(function()
+			animate:Destroy()
+		end)
+	end
 
-        safe(function()
-            animate:Destroy()
-        end)
-    end
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
 
-    local humanoid = character:FindFirstChildOfClass("Humanoid")
+	if humanoid then
+		local animator = humanoid:FindFirstChildOfClass("Animator")
 
-    if humanoid then
+		if animator then
+			h_Animator(animator)
+		end
 
-        local animator =
-            humanoid:FindFirstChildOfClass("Animator")
+		local animController =
+			humanoid:FindFirstChildOfClass("AnimationController")
 
-        if animator then
-            h_Animator(animator)
-        end
-
-        local animController =
-            humanoid:FindFirstChildOfClass("AnimationController")
-
-        if animController then
-            h_AnimationController(animController)
-        end
-    end
+		if animController then
+			h_AnimationController(animController)
+		end
+	end
 end
-
---============================================================
--- LIGHTING
---============================================================
 
 local function cleanLighting()
+	safe(function()
+		local settingsObject =
+			UserSettings():GetService("UserGameSettings")
 
-    safe(function()
+		settingsObject.GraphicsQualityLevel = 1
+	end)
 
-        local settingsObject =
-            UserSettings():GetService("UserGameSettings")
+	safe(function()
+		settings().Rendering.QualityLevel =
+			Enum.QualityLevel.Level01
+	end)
 
-        settingsObject.GraphicsQualityLevel = 1
-    end)
+	safe(function()
+		Lighting.GlobalShadows = false
+	end)
 
-    safe(function()
-        settings().Rendering.QualityLevel =
-            Enum.QualityLevel.Level01
-    end)
+	safe(function()
+		Lighting.EnvironmentDiffuseScale = 0
+	end)
 
-    safe(function()
-        Lighting.GlobalShadows = false
-    end)
+	safe(function()
+		Lighting.EnvironmentSpecularScale = 0
+	end)
 
-    safe(function()
-        Lighting.EnvironmentDiffuseScale = 0
-    end)
+	safe(function()
+		Lighting.ShadowSoftness = 0
+	end)
 
-    safe(function()
-        Lighting.EnvironmentSpecularScale = 0
-    end)
+	safe(function()
+		Lighting.Technology =
+			Enum.Technology.Compatibility
+	end)
 
-    safe(function()
-        Lighting.ShadowSoftness = 0
-    end)
+	local children = Lighting:GetChildren()
 
-    safe(function()
-        Lighting.Technology =
-            Enum.Technology.Compatibility
-    end)
+	for i = 1, #children do
+		local obj = children[i]
 
-    local children = Lighting:GetChildren()
+		if obj:IsA("PostEffect") then
+			safe(function()
+				obj.Enabled = false
+			end)
+		end
+	end
 
-    for i = 1, #children do
+	safe(function()
+		Lighting:GetPropertyChangedSignal(
+			"GlobalShadows"
+		):Connect(function()
 
-        local obj = children[i]
+			if Lighting.GlobalShadows then
+				Lighting.GlobalShadows = false
+			end
 
-        if obj:IsA("PostEffect") then
-
-            safe(function()
-                obj.Enabled = false
-            end)
-        end
-    end
-
-    safe(function()
-
-        Lighting:GetPropertyChangedSignal(
-            "GlobalShadows"
-        ):Connect(function()
-
-            if Lighting.GlobalShadows then
-                Lighting.GlobalShadows = false
-            end
-
-        end)
-    end)
+		end)
+	end)
 end
-
---============================================================
--- MATERIAL SERVICE
---============================================================
 
 local function cleanMaterialService()
+	local children = MaterialService:GetChildren()
 
-    local children = MaterialService:GetChildren()
+	for i = 1, #children do
+		local obj = children[i]
 
-    for i = 1, #children do
+		if obj:IsA("MaterialVariant")
+			or obj:IsA("TerrainDetail") then
 
-        local obj = children[i]
-
-        if obj:IsA("MaterialVariant")
-            or obj:IsA("TerrainDetail") then
-
-            safe(function()
-                obj:Destroy()
-            end)
-        end
-    end
+			safe(function()
+				obj:Destroy()
+			end)
+		end
+	end
 end
-
---============================================================
--- TERRAIN
---============================================================
 
 local function cleanTerrain()
+	local terrain =
+		Workspace:FindFirstChildOfClass("Terrain")
 
-    local terrain =
-        Workspace:FindFirstChildOfClass("Terrain")
+	if not terrain then
+		return
+	end
 
-    if not terrain then
-        return
-    end
+	safe(function()
+		terrain.WaterWaveSize = 0
+	end)
 
-    safe(function()
-        terrain.WaterWaveSize = 0
-    end)
+	safe(function()
+		terrain.WaterWaveSpeed = 0
+	end)
 
-    safe(function()
-        terrain.WaterWaveSpeed = 0
-    end)
+	safe(function()
+		terrain.WaterReflectance = 0
+	end)
 
-    safe(function()
-        terrain.WaterReflectance = 0
-    end)
-
-    safe(function()
-        terrain.WaterTransparency = 1
-    end)
+	safe(function()
+		terrain.WaterTransparency = 1
+	end)
 end
-
---============================================================
--- GUI
---============================================================
 
 local function createGui()
+	if not LocalPlayer then
+		return
+	end
 
-    if not LocalPlayer then
-        return
-    end
+	local playerGui =
+		LocalPlayer:FindFirstChildOfClass("PlayerGui")
 
-    local playerGui =
-        LocalPlayer:FindFirstChildOfClass("PlayerGui")
+	if not playerGui
+		or playerGui:FindFirstChild("Arcizz0Booster") then
+		return
+	end
 
-    if not playerGui
-        or playerGui:FindFirstChild("Arcizz0Booster") then
+	local screenGui = Instance.new("ScreenGui")
 
-        return
-    end
+	screenGui.Name = "Arcizz0Booster"
+	screenGui.ResetOnSpawn = false
+	screenGui.IgnoreGuiInset = true
+	screenGui.DisplayOrder = 999999
+	screenGui.ZIndexBehavior =
+		Enum.ZIndexBehavior.Sibling
 
-    local screenGui = Instance.new("ScreenGui")
+	screenGui.Parent = playerGui
 
-    screenGui.Name = "Arcizz0Booster"
-    screenGui.ResetOnSpawn = false
-    screenGui.IgnoreGuiInset = true
-    screenGui.DisplayOrder = 999999
-    screenGui.ZIndexBehavior =
-        Enum.ZIndexBehavior.Sibling
+	local frame = Instance.new("Frame")
 
-    screenGui.Parent = playerGui
+	frame.Name = "BoosterFrame"
+	frame.AnchorPoint = Vector2.new(0.5, 0)
+	frame.Position =
+		UDim2.new(0.5, 0, 0, -88)
 
-    local frame = Instance.new("Frame")
+	frame.Size =
+		UDim2.new(0, 390, 0, 70)
 
-    frame.Name = "BoosterFrame"
-    frame.AnchorPoint = Vector2.new(0.5, 0)
-    frame.Position =
-        UDim2.new(0.5, 0, 0, -88)
+	frame.BackgroundColor3 =
+		Color3.fromRGB(12, 2, 2)
 
-    frame.Size =
-        UDim2.new(0, 390, 0, 70)
+	frame.BorderSizePixel = 0
+	frame.Parent = screenGui
 
-    frame.BackgroundColor3 =
-        Color3.fromRGB(12, 2, 2)
+	local corner = Instance.new("UICorner")
 
-    frame.BorderSizePixel = 0
-    frame.Parent = screenGui
+	corner.CornerRadius =
+		UDim.new(0, 13)
 
-    local corner = Instance.new("UICorner")
+	corner.Parent = frame
 
-    corner.CornerRadius =
-        UDim.new(0, 13)
+	local stroke = Instance.new("UIStroke")
 
-    corner.Parent = frame
+	stroke.Thickness = 2
+	stroke.Transparency = 0.15
 
-    local stroke = Instance.new("UIStroke")
+	stroke.Color =
+		Color3.fromRGB(125, 0, 0)
 
-    stroke.Thickness = 2
-    stroke.Transparency = 0.15
+	stroke.Parent = frame
 
-    stroke.Color =
-        Color3.fromRGB(125, 0, 0)
+	local line = Instance.new("Frame")
 
-    stroke.Parent = frame
+	line.Size =
+		UDim2.new(1, 0, 0, 3)
 
-    local line = Instance.new("Frame")
+	line.BackgroundColor3 =
+		Color3.fromRGB(180, 0, 0)
 
-    line.Size =
-        UDim2.new(1, 0, 0, 3)
+	line.BorderSizePixel = 0
+	line.Parent = frame
 
-    line.BackgroundColor3 =
-        Color3.fromRGB(180, 0, 0)
+	local title = Instance.new("TextLabel")
 
-    line.BorderSizePixel = 0
-    line.Parent = frame
+	title.Size =
+		UDim2.new(1, -30, 1, -10)
 
-    local title = Instance.new("TextLabel")
+	title.Position =
+		UDim2.new(0.5, 0, 0.5, 0)
 
-    title.Size =
-        UDim2.new(1, -30, 1, -10)
+	title.AnchorPoint =
+		Vector2.new(0.5, 0.5)
 
-    title.Position =
-        UDim2.new(0.5, 0, 0.5, 0)
+	title.BackgroundTransparency = 1
 
-    title.AnchorPoint =
-        Vector2.new(0.5, 0.5)
+	title.Text = "Arcizz0 Booster"
 
-    title.BackgroundTransparency = 1
+	title.Font = Enum.Font.GothamBold
 
-    title.Text = "Arcizz0 Booster"
+	title.TextSize = 27
 
-    title.Font = Enum.Font.GothamBold
+	title.TextColor3 =
+		Color3.fromRGB(255, 0, 0)
 
-    title.TextSize = 27
+	title.Parent = frame
 
-    title.TextColor3 =
-        Color3.fromRGB(255, 0, 0)
+	local gradient = Instance.new("UIGradient")
 
-    title.Parent = frame
+	gradient.Color = ColorSequence.new({
 
-    local gradient = Instance.new("UIGradient")
+		ColorSequenceKeypoint.new(
+			0,
+			Color3.fromRGB(70, 0, 0)
+		),
 
-    gradient.Color = ColorSequence.new({
+		ColorSequenceKeypoint.new(
+			0.25,
+			Color3.fromRGB(255, 25, 25)
+		),
 
-        ColorSequenceKeypoint.new(
-            0,
-            Color3.fromRGB(70, 0, 0)
-        ),
+		ColorSequenceKeypoint.new(
+			0.5,
+			Color3.fromRGB(100, 0, 0)
+		),
 
-        ColorSequenceKeypoint.new(
-            0.25,
-            Color3.fromRGB(255, 25, 25)
-        ),
+		ColorSequenceKeypoint.new(
+			0.75,
+			Color3.fromRGB(255, 0, 0)
+		),
 
-        ColorSequenceKeypoint.new(
-            0.5,
-            Color3.fromRGB(100, 0, 0)
-        ),
+		ColorSequenceKeypoint.new(
+			1,
+			Color3.fromRGB(65, 0, 0)
+		),
+	})
 
-        ColorSequenceKeypoint.new(
-            0.75,
-            Color3.fromRGB(255, 0, 0)
-        ),
+	gradient.Offset =
+		Vector2.new(-1, 0)
 
-        ColorSequenceKeypoint.new(
-            1,
-            Color3.fromRGB(65, 0, 0)
-        ),
-    })
+	gradient.Parent = title
 
-    gradient.Offset =
-        Vector2.new(-1, 0)
+	TweenService:Create(
+		frame,
+		TweenInfo.new(
+			0.55,
+			Enum.EasingStyle.Quint,
+			Enum.EasingDirection.Out
+		),
+		{
+			Position =
+				UDim2.new(0.5, 0, 0, 18)
+		}
+	):Play()
 
-    gradient.Parent = title
+	task.spawn(function()
+		for _ = 1, 3 do
+			if not screenGui.Parent then
+				break
+			end
 
-    TweenService:Create(
-        frame,
-        TweenInfo.new(
-            0.55,
-            Enum.EasingStyle.Quint,
-            Enum.EasingDirection.Out
-        ),
-        {
-            Position =
-                UDim2.new(0.5, 0, 0, 18)
-        }
-    ):Play()
+			local a =
+				TweenService:Create(
+					gradient,
+					TweenInfo.new(
+						0.75,
+						Enum.EasingStyle.Linear
+					),
+					{
+						Offset =
+							Vector2.new(1, 0)
+					}
+				)
 
-    task.spawn(function()
+			a:Play()
+			a.Completed:Wait()
 
-        for _ = 1, 3 do
+			if not screenGui.Parent then
+				break
+			end
 
-            if not screenGui.Parent then
-                break
-            end
+			local b =
+				TweenService:Create(
+					gradient,
+					TweenInfo.new(
+						0.75,
+						Enum.EasingStyle.Linear
+					),
+					{
+						Offset =
+							Vector2.new(-1, 0)
+					}
+				)
 
-            local a =
-                TweenService:Create(
-                    gradient,
-                    TweenInfo.new(
-                        0.75,
-                        Enum.EasingStyle.Linear
-                    ),
-                    {
-                        Offset =
-                            Vector2.new(1, 0)
-                    }
-                )
+			b:Play()
+			b.Completed:Wait()
+		end
+	end)
 
-            a:Play()
-            a.Completed:Wait()
+	task.delay(3, function()
+		if not screenGui.Parent then
+			return
+		end
 
-            if not screenGui.Parent then
-                break
-            end
+		local closeTween =
+			TweenService:Create(
+				frame,
+				TweenInfo.new(
+					0.45,
+					Enum.EasingStyle.Quint,
+					Enum.EasingDirection.In
+				),
+				{
+					Position =
+						UDim2.new(
+							0.5,
+							0,
+							0,
+							-88
+						)
+				}
+			)
 
-            local b =
-                TweenService:Create(
-                    gradient,
-                    TweenInfo.new(
-                        0.75,
-                        Enum.EasingStyle.Linear
-                    ),
-                    {
-                        Offset =
-                            Vector2.new(-1, 0)
-                    }
-                )
+		closeTween:Play()
 
-            b:Play()
-            b.Completed:Wait()
-        end
-    end)
-
-    task.delay(3, function()
-
-        if not screenGui.Parent then
-            return
-        end
-
-        local closeTween =
-            TweenService:Create(
-                frame,
-                TweenInfo.new(
-                    0.45,
-                    Enum.EasingStyle.Quint,
-                    Enum.EasingDirection.In
-                ),
-                {
-                    Position =
-                        UDim2.new(
-                            0.5,
-                            0,
-                            0,
-                            -88
-                        )
-                }
-            )
-
-        closeTween:Play()
-
-        closeTween.Completed:Connect(function()
-
-            if screenGui.Parent then
-                screenGui:Destroy()
-            end
-
-        end)
-    end)
+		closeTween.Completed:Connect(function()
+			if screenGui.Parent then
+				screenGui:Destroy()
+			end
+		end)
+	end)
 end
-
---============================================================
--- STARTUP
---============================================================
 
 cleanLighting()
 cleanMaterialService()
@@ -703,216 +569,174 @@ cleanTerrain()
 
 task.defer(createGui)
 
---============================================================
--- INITIAL WORLD SCAN
---============================================================
-
 local function scanInitialWorld()
+	if not game:IsLoaded() then
+		game.Loaded:Wait()
+	end
 
-    if not game:IsLoaded() then
-        game.Loaded:Wait()
-    end
+	local objects =
+		Workspace:GetDescendants()
 
-    local objects =
-        Workspace:GetDescendants()
+	for i = 1, #objects do
+		tryQueue(objects[i])
+	end
 
-    for i = 1, #objects do
-        tryQueue(objects[i])
-    end
-
-    for _, player in ipairs(
-        Players:GetPlayers()
-    ) do
-
-        if player.Character then
-
-            task.defer(
-                cleanCharacter,
-                player.Character
-            )
-        end
-    end
+	for _, player in ipairs(
+		Players:GetPlayers()
+	) do
+		if player.Character then
+			task.defer(
+				cleanCharacter,
+				player.Character
+			)
+		end
+	end
 end
 
 task.spawn(scanInitialWorld)
 
---============================================================
--- LIVE STREAMING
---============================================================
-
 Workspace.DescendantAdded:Connect(function(obj)
 
-    -- Самое главное:
-    -- текстуры обрабатываем сразу и очень дёшево.
-    if liveTextureOptimize(obj) then
-        return
-    end
+	tryQueue(obj)
 
-    -- Персонажей обрабатываем отдельно.
-    if obj.ClassName == "Humanoid" then
+	if obj.ClassName == "Humanoid" then
+		local character = obj.Parent
 
-        local character = obj.Parent
-
-        if character then
-
-            task.defer(
-                cleanCharacter,
-                character
-            )
-        end
-
-        return
-    end
-
-    -- Всё остальное идёт в небольшую очередь.
-    tryQueue(obj)
+		if character then
+			task.defer(
+				cleanCharacter,
+				character
+			)
+		end
+	end
 end)
 
---============================================================
--- PLAYERS
---============================================================
-
 local function setupPlayer(player)
+	if player.Character then
+		task.defer(
+			cleanCharacter,
+			player.Character
+		)
+	end
 
-    if player.Character then
-
-        task.defer(
-            cleanCharacter,
-            player.Character
-        )
-    end
-
-    player.CharacterAdded:Connect(
-        function(character)
-
-            task.defer(
-                cleanCharacter,
-                character
-            )
-        end
-    )
+	player.CharacterAdded:Connect(
+		function(character)
+			task.defer(
+				cleanCharacter,
+				character
+			)
+		end
+	)
 end
 
 for _, player in ipairs(
-    Players:GetPlayers()
+	Players:GetPlayers()
 ) do
-
-    setupPlayer(player)
+	setupPlayer(player)
 end
 
 Players.PlayerAdded:Connect(setupPlayer)
 
---============================================================
--- HEARTBEAT WORKER
---============================================================
-
 RunService.Heartbeat:Connect(function()
 
-    local remaining =
-        queueLen - queueHead + 1
+	local remaining =
+		queueLen - queueHead + 1
 
-    if remaining <= 0 then
+	if remaining <= 0 then
 
-        if queueHead > GC_THRESHOLD then
+		if queueHead > GC_THRESHOLD then
+			table.clear(queueObjs)
+			table.clear(queueHandlers)
 
-            table.clear(queueObjs)
-            table.clear(queueHandlers)
+			queueHead = 1
+			queueLen = 0
+		end
 
-            queueHead = 1
-            queueLen = 0
-        end
+		return
+	end
 
-        return
-    end
+	local budget
+	local maxPerFrame
 
-    local budget
-    local maxPerFrame
+	if remaining >= BURST_QUEUE then
+		budget = BURST_BUDGET
+		maxPerFrame = BURST_MAX
 
-    if remaining >= BURST_QUEUE then
+	elseif remaining <= SMALL_QUEUE then
+		budget = MICRO_BUDGET
+		maxPerFrame = MICRO_MAX
 
-        budget = BURST_BUDGET
-        maxPerFrame = BURST_MAX
+	else
+		budget = NORMAL_BUDGET
+		maxPerFrame = NORMAL_MAX
+	end
 
-    elseif remaining <= SMALL_QUEUE then
+	local start = os.clock()
+	local processed = 0
 
-        budget = MICRO_BUDGET
-        maxPerFrame = MICRO_MAX
+	while queueHead <= queueLen
+		and processed < maxPerFrame do
 
-    else
+		local obj =
+			queueObjs[queueHead]
 
-        budget = NORMAL_BUDGET
-        maxPerFrame = NORMAL_MAX
-    end
+		local handler =
+			queueHandlers[queueHead]
 
-    local start = os.clock()
+		queueObjs[queueHead] = nil
+		queueHandlers[queueHead] = nil
 
-    local processed = 0
+		queueHead += 1
 
-    while queueHead <= queueLen
-        and processed < maxPerFrame do
+		if obj then
 
-        local obj =
-            queueObjs[queueHead]
+			queued[obj] = nil
 
-        local handler =
-            queueHandlers[queueHead]
+			if obj.Parent and not optimized[obj] then
 
-        queueObjs[queueHead] = nil
-        queueHandlers[queueHead] = nil
+				handler(obj)
 
-        queueHead += 1
+				optimized[obj] = true
+			end
+		end
 
-        if obj then
+		processed += 1
 
-            queued[obj] = nil
+		if processed % CLOCK_CHECK_EVERY == 0
+			and os.clock() - start >= budget then
+			break
+		end
+	end
 
-            if obj.Parent then
+	if queueHead > GC_THRESHOLD then
 
-                handler(obj)
+		local newLen =
+			queueLen - queueHead + 1
 
-                optimized[obj] = true
-            end
-        end
+		local compactedObjs =
+			table.create(newLen)
 
-        processed += 1
+		local compactedHandlers =
+			table.create(newLen)
 
-        if processed % CLOCK_CHECK_EVERY == 0
-            and os.clock() - start >= budget then
+		for i = queueHead, queueLen do
 
-            break
-        end
-    end
+			compactedObjs[#compactedObjs + 1] =
+				queueObjs[i]
 
-    -- Компактация только при реально большой очереди.
-    if queueHead > GC_THRESHOLD then
+			compactedHandlers[#compactedHandlers + 1] =
+				queueHandlers[i]
+		end
 
-        local newLen =
-            queueLen - queueHead + 1
+		queueObjs =
+			compactedObjs
 
-        local compactedObjs =
-            table.create(newLen)
+		queueHandlers =
+			compactedHandlers
 
-        local compactedHandlers =
-            table.create(newLen)
+		queueLen =
+			#compactedObjs
 
-        for i = queueHead, queueLen do
-
-            compactedObjs[#compactedObjs + 1] =
-                queueObjs[i]
-
-            compactedHandlers[#compactedHandlers + 1] =
-                queueHandlers[i]
-        end
-
-        queueObjs =
-            compactedObjs
-
-        queueHandlers =
-            compactedHandlers
-
-        queueLen =
-            #compactedObjs
-
-        queueHead = 1
-    end
+		queueHead = 1
+	end
 end)

@@ -19,7 +19,7 @@ local MICRO_MAX  = 35
 local NORMAL_MAX = 90
 local BURST_MAX  = 140
 
-local GC_THRESHOLD = 3000
+local GC_THRESHOLD = 8000
 local CLOCK_CHECK_EVERY = 10
 
 local queueObjs = table.create(2048)
@@ -708,35 +708,25 @@ RunService.Heartbeat:Connect(function()
 		end
 	end
 
+	-- Compaction: uses table.move (native C copy, no per-slot Lua loop,
+	-- no new table allocations) instead of manually rebuilding the arrays.
+	-- This is what removed the periodic ~0.5s micro-freeze.
 	if queueHead > GC_THRESHOLD then
 
 		local newLen =
 			queueLen - queueHead + 1
 
-		local compactedObjs =
-			table.create(newLen)
-
-		local compactedHandlers =
-			table.create(newLen)
-
-		for i = queueHead, queueLen do
-
-			compactedObjs[#compactedObjs + 1] =
-				queueObjs[i]
-
-			compactedHandlers[#compactedHandlers + 1] =
-				queueHandlers[i]
+		if newLen > 0 then
+			table.move(queueObjs, queueHead, queueLen, 1)
+			table.move(queueHandlers, queueHead, queueLen, 1)
 		end
 
-		queueObjs =
-			compactedObjs
+		for i = newLen + 1, queueLen do
+			queueObjs[i] = nil
+			queueHandlers[i] = nil
+		end
 
-		queueHandlers =
-			compactedHandlers
-
-		queueLen =
-			#compactedObjs
-
+		queueLen = newLen
 		queueHead = 1
 	end
 end)

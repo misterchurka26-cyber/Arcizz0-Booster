@@ -19,7 +19,8 @@ local MICRO_MAX  = 35
 local NORMAL_MAX = 90
 local BURST_MAX  = 140
 
-local GC_THRESHOLD = 8000
+local GC_THRESHOLD = 3000
+local COMPACT_MAX_REMAINING = 80
 local CLOCK_CHECK_EVERY = 10
 
 local queueObjs = table.create(2048)
@@ -708,25 +709,33 @@ RunService.Heartbeat:Connect(function()
 		end
 	end
 
-	-- Compaction: uses table.move (native C copy, no per-slot Lua loop,
-	-- no new table allocations) instead of manually rebuilding the arrays.
-	-- This is what removed the periodic ~0.5s micro-freeze.
+	-- Compaction only runs once the *unprocessed tail* is small
+	-- (<= COMPACT_MAX_REMAINING). That caps the cost of table.move
+	-- to a small, constant amount of work no matter how big queueHead
+	-- has grown, so it can never cause a noticeable pause -- regardless
+	-- of GC_THRESHOLD or how large the queue was historically.
 	if queueHead > GC_THRESHOLD then
 
 		local newLen =
 			queueLen - queueHead + 1
 
-		if newLen > 0 then
-			table.move(queueObjs, queueHead, queueLen, 1)
-			table.move(queueHandlers, queueHead, queueLen, 1)
-		end
+		if newLen <= COMPACT_MAX_REMAINING then
 
-		for i = newLen + 1, queueLen do
-			queueObjs[i] = nil
-			queueHandlers[i] = nil
-		end
+			if newLen > 0 then
+				table.move(queueObjs, queueHead, queueLen, 1)
+				table.move(queueHandlers, queueHead, queueLen, 1)
+			end
 
-		queueLen = newLen
-		queueHead = 1
+			for i = newLen + 1, queueLen do
+				queueObjs[i] = nil
+				queueHandlers[i] = nil
+			end
+
+			queueLen = newLen
+			queueHead = 1
+		end
+		-- else: tail still large, defer compaction to a later frame
+		-- when it's naturally shrunk down (cheap), instead of paying
+		-- for a big move right now.
 	end
 end)

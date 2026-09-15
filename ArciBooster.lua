@@ -253,10 +253,6 @@ local function cleanCharacter(character)
 			h_AnimationController(animController)
 		end
 
-		-- Name/health billboard GUIs are rendered per-character every
-		-- frame; with many players/NPCs nearby this is a real, steady
-		-- render cost. Turning it off is a genuine FPS gain, not just
-		-- "not adding overhead".
 		safe(function()
 			humanoid.DisplayDistanceType =
 				Enum.HumanoidDisplayDistanceType.None
@@ -312,10 +308,6 @@ local function cleanLighting()
 			end)
 
 		elseif obj:IsA("Atmosphere") then
-			-- Atmosphere adds a full-screen fog/haze pass every frame
-			-- (fill-rate cost). Zeroing it out removes that pass
-			-- without deleting the instance (avoids breaking scripts
-			-- that reference it).
 			safe(function()
 				obj.Density = 0
 				obj.Haze = 0
@@ -382,9 +374,6 @@ local function cleanTerrain()
 		terrain.WaterTransparency = 1
 	end)
 
-	-- Terrain grass/rock decoration is extra geometry drawn on top of
-	-- the terrain mesh -- disabling it is a straightforward render cost
-	-- cut, especially on grassy/foliage-heavy maps.
 	safe(function()
 		terrain.Decoration = false
 	end)
@@ -624,11 +613,6 @@ local function scanInitialWorld()
 
 	local total = #objects
 
-	-- Time-budgeted instead of a fixed item count: each slice uses up
-	-- to SCAN_BUDGET of real time before yielding, so a frame is never
-	-- blocked longer than that -- but unlike a fixed chunk size, it
-	-- doesn't yield early (and pay a ~16ms frame-wait) when objects are
-	-- cheap to queue, which is what was adding up to the ~0.4s delay.
 	local sliceStart = os.clock()
 
 	for i = 1, total do
@@ -656,10 +640,6 @@ end
 
 task.spawn(scanInitialWorld)
 
--- Safety net: if the queue never drops low enough on its own
--- (e.g. objects keep streaming in), drop out of warm-up anyway
--- after WARMUP_TIMEOUT seconds so the elevated budget doesn't
--- keep running indefinitely during normal gameplay.
 task.delay(WARMUP_TIMEOUT, function()
 	warmingUp = false
 end)
@@ -728,11 +708,6 @@ RunService.Heartbeat:Connect(function()
 	local maxPerFrame
 
 	if warmingUp then
-		-- Wider budget just for the initial load burst -- 2.5ms is
-		-- still a small slice of a 16.6ms (60fps) frame, so it doesn't
-		-- read as a freeze, but it clears a big base's queue far
-		-- faster than the steady-state budgets below, which are
-		-- deliberately conservative so they don't cost FPS mid-game.
 		budget = WARMUP_BUDGET
 		maxPerFrame = WARMUP_MAX
 
@@ -790,11 +765,6 @@ RunService.Heartbeat:Connect(function()
 		end
 	end
 
-	-- Compaction only runs once the *unprocessed tail* is small
-	-- (<= COMPACT_MAX_REMAINING). That caps the cost of table.move
-	-- to a small, constant amount of work no matter how big queueHead
-	-- has grown, so it can never cause a noticeable pause -- regardless
-	-- of GC_THRESHOLD or how large the queue was historically.
 	if queueHead > GC_THRESHOLD then
 
 		local newLen =
@@ -815,8 +785,5 @@ RunService.Heartbeat:Connect(function()
 			queueLen = newLen
 			queueHead = 1
 		end
-		-- else: tail still large, defer compaction to a later frame
-		-- when it's naturally shrunk down (cheap), instead of paying
-		-- for a big move right now.
 	end
 end)

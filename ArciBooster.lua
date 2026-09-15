@@ -23,6 +23,14 @@ local GC_THRESHOLD = 3000
 local COMPACT_MAX_REMAINING = 80
 local CLOCK_CHECK_EVERY = 10
 
+local SCAN_CHUNK = 400
+
+local WARMUP_BUDGET = 0.0025
+local WARMUP_MAX = 220
+local WARMUP_TIMEOUT = 12
+
+local warmingUp = true
+
 local queueObjs = table.create(2048)
 local queueHandlers = table.create(2048)
 
@@ -578,8 +586,19 @@ local function scanInitialWorld()
 	local objects =
 		Workspace:GetDescendants()
 
-	for i = 1, #objects do
+	local total = #objects
+
+	-- Enumerating + queueing thousands of objects in one unbroken loop
+	-- is itself the freeze on a big base -- it runs inside a single
+	-- tick with no yield. Yielding every SCAN_CHUNK items spreads that
+	-- cost across frames so the scan itself never blocks a frame,
+	-- while still finishing in a couple of frames total.
+	for i = 1, total do
 		tryQueue(objects[i])
+
+		if i % SCAN_CHUNK == 0 then
+			task.wait()
+		end
 	end
 
 	for _, player in ipairs(
@@ -595,6 +614,14 @@ local function scanInitialWorld()
 end
 
 task.spawn(scanInitialWorld)
+
+-- Safety net: if the queue never drops low enough on its own
+-- (e.g. objects keep streaming in), drop out of warm-up anyway
+-- after WARMUP_TIMEOUT seconds so the elevated budget doesn't
+-- keep running indefinitely during normal gameplay.
+task.delay(WARMUP_TIMEOUT, function()
+	warmingUp = false
+end)
 
 Workspace.DescendantAdded:Connect(function(obj)
 
@@ -659,7 +686,20 @@ RunService.Heartbeat:Connect(function()
 	local budget
 	local maxPerFrame
 
-	if remaining >= BURST_QUEUE then
+	if warmingUp then
+		-- Wider budget just for the initial load burst -- 2.5ms is
+		-- still a small slice of a 16.6ms (60fps) frame, so it doesn't
+		-- read as a freeze, but it clears a big base's queue far
+		-- faster than the steady-state budgets below, which are
+		-- deliberately conservative so they don't cost FPS mid-game.
+		budget = WARMUP_BUDGET
+		maxPerFrame = WARMUP_MAX
+
+		if remaining <= SMALL_QUEUE then
+			warmingUp = false
+		end
+
+	elseif remaining >= BURST_QUEUE then
 		budget = BURST_BUDGET
 		maxPerFrame = BURST_MAX
 

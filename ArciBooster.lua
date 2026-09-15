@@ -23,10 +23,11 @@ local GC_THRESHOLD = 3000
 local COMPACT_MAX_REMAINING = 80
 local CLOCK_CHECK_EVERY = 10
 
-local SCAN_CHUNK = 400
+local SCAN_CHUNK_CHECK = 50
+local SCAN_BUDGET = 0.0035
 
-local WARMUP_BUDGET = 0.0025
-local WARMUP_MAX = 220
+local WARMUP_BUDGET = 0.0035
+local WARMUP_MAX = 350
 local WARMUP_TIMEOUT = 12
 
 local warmingUp = true
@@ -623,16 +624,21 @@ local function scanInitialWorld()
 
 	local total = #objects
 
-	-- Enumerating + queueing thousands of objects in one unbroken loop
-	-- is itself the freeze on a big base -- it runs inside a single
-	-- tick with no yield. Yielding every SCAN_CHUNK items spreads that
-	-- cost across frames so the scan itself never blocks a frame,
-	-- while still finishing in a couple of frames total.
+	-- Time-budgeted instead of a fixed item count: each slice uses up
+	-- to SCAN_BUDGET of real time before yielding, so a frame is never
+	-- blocked longer than that -- but unlike a fixed chunk size, it
+	-- doesn't yield early (and pay a ~16ms frame-wait) when objects are
+	-- cheap to queue, which is what was adding up to the ~0.4s delay.
+	local sliceStart = os.clock()
+
 	for i = 1, total do
 		tryQueue(objects[i])
 
-		if i % SCAN_CHUNK == 0 then
+		if i % SCAN_CHUNK_CHECK == 0
+			and os.clock() - sliceStart >= SCAN_BUDGET then
+
 			task.wait()
+			sliceStart = os.clock()
 		end
 	end
 
